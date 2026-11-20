@@ -1,21 +1,17 @@
 // Tampilan dashboard. Perhitungan ada di sim.js (fungsi simulate).
-// Slider jitter di layar dalam persen, simulate memakai pecahan.
+// Jitter (variasi waktu tempuh) tetap di D dalam persen, simulate memakai pecahan.
 // Waktu PP dan kWh per PP diturunkan dari jarak sekali jalan (station ke tujuan, PP = 2 x jarak).
 const route=p=>{const km=2*p.jarakKm;return{ppKm:km,ppMin:km/p.speedKmh*60,kwhPP:km*p.kwhKm}};
 const simulateUI=p=>simulate(Object.assign({},p,route(p),{jitter:p.jitter/100}));
 const D={nTruk:37,nSt:4,slots:3,slotMode:'all',chargeMin:80,swapMin:5,jarakKm:21,speedKmh:50,kwhKm:1.3636,capKwh:320,socMin:10,jitter:15,startMode:'bertahap',strategy:'standar',earlySoc:30,opsH:24,propCharge:0,seed:7};
 const P=Object.assign({},D);
 const $=id=>document.getElementById(id);
-const PRESETS=[
- ['4 station',{nTruk:37,nSt:4}],['5 station',{nTruk:37,nSt:5}],['1 station saja',{nTruk:37,nSt:1}],
- ['1 station, 9 truk',{nTruk:9,nSt:1}],['Serentak 3 truk',{nTruk:9,nSt:1,startMode:'serentak',jitter:0}],['Slot kosong wajib',{nTruk:37,nSt:5,slotMode:'one'}],['Fleksibel',{nTruk:37,nSt:5,strategy:'fleksibel'}]
-];
 let R=null,gSt=0,tNow=480;
 const f1=x=>x.toFixed(1),f0=x=>Math.round(x).toString();
 const hhmm=m=>{m=Math.max(0,Math.min(1439,Math.floor(m)));return String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0')};
 function verdict(k){
  if(k.avgWait<=5&&k.maxWait<=30)return['ok','Layak',`Antrean terkendali: rata-rata tunggu ${f1(k.avgWait)} menit, maksimum ${f0(k.maxWait)} menit.`];
- if(k.avgWait<=15)return['warn','Batas',`Antrean mulai terasa: rata-rata ${f1(k.avgWait)} menit, maksimum ${f0(k.maxWait)} menit. Tambah station atau ratakan jadwal.`];
+ if(k.avgWait<=15)return['warn','Batas minimum',`Antrean mulai terasa: rata-rata ${f1(k.avgWait)} menit, maksimum ${f0(k.maxWait)} menit.`];
  return['bad','Kurang',`Antrean tinggi: rata-rata ${f1(k.avgWait)} menit, maksimum ${f0(k.maxWait)} menit. Kapasitas tidak cukup untuk armada ini.`];
 }
 const COL={ok:'var(--ok)',warn:'var(--warn)',bad:'var(--bad)'};
@@ -67,7 +63,7 @@ function drawGantt(){
 function drawKpi(){
  const k=R.kpi,v=verdict(k);
  $('verdict').innerHTML=`<span class="dot" style="background:${COL[v[0]]}"></span><div><b>${v[1]}: ${R.N} truk, ${R.S} station × ${R.nb} slot</b><div class="sub">${v[2]}</div></div>`;
- const K=[['Swap per hari',f0(k.swaps),`kapasitas teori ${f0(k.capacity)}`],['Tunggu rata-rata',f1(k.avgWait)+' mnt',`P90 ${f0(k.p90)} · maks ${f0(k.maxWait)} mnt`],
+ const K=[['Swap per hari',f0(k.swaps),`kapasitas teori ${f0(k.capacity)}`],['Tunggu rata-rata',f1(k.avgWait)+' mnt',''],
   ['Utilisasi charger',f0(k.utilCharger*100)+'%',`bay swap ${f0(k.utilBay*100)}%`],['Efisiensi armada',f0(k.eff*100)+'%',`${f0(k.ppTotal)} PP dari ${f0(k.idealPP)} ideal`],
   ['Antrean puncak',f0(k.peakQ)+' truk',`rata-rata ${f1(k.avgQ)}`],['Daya puncak',f0(k.peakKW)+' kW',`energi ${f1(k.energyMWh)} MWh/hari`]];
  $('kpis').innerHTML=K.map(a=>`<div class="kpi"><div class="l">${a[0]}</div><div class="n">${a[1]}</div><div class="s">${a[2]}</div></div>`).join('');
@@ -83,19 +79,8 @@ function drawSnap(){
  const nm=['Standby','Jalan','Antri','Swap'];
  $('trucks').innerHTML=Array.from({length:N},(_,i)=>{const st=R.tState[t*N+i],soc=R.tSoc[t*N+i];return `<div class="tk s${st}${soc<R.P.socMin+R.socPerPP*0.5?' low':''}" title="Truk ${i+1}: ${nm[st]}${st>=2?' di station '+(R.tSt[t*N+i]+1):''}"><span>T${i+1}</span><b>${f0(soc)}%</b></div>`}).join('');
  let h='<table><tr><th>Station</th><th>Antri</th><th>Baterai siap</th><th>Charging</th><th>Est. tunggu</th></tr>';
- const ew=[];
- for(let k=0;k<S;k++){const e=estWaitAt(k,t);ew.push(e);h+=`<tr><td>Station ${k+1}</td><td>${R.qLen[t*S+k]}</td><td>${R.rdy[t*S+k]}</td><td>${R.chg[t*S+k]}</td><td>${e} mnt</td></tr>`}
+ for(let k=0;k<S;k++){const e=estWaitAt(k,t);h+=`<tr><td>Station ${k+1}</td><td>${R.qLen[t*S+k]}</td><td>${R.rdy[t*S+k]}</td><td>${R.chg[t*S+k]}</td><td>${e} mnt</td></tr>`}
  $('stTable').innerHTML=h+'</table>';
- // saran
- const best=ew.indexOf(Math.min(...ew));
- const w=R.waitByHour,hrs=w.map((v,i)=>[v,i]).filter(a=>R.waitByHourN[a[1]]>0).sort((a,b)=>a[0]-b[0]);
- const low=hrs.slice(0,3).map(a=>String(a[1]).padStart(2,'0')+':00'),hi=hrs.slice(-3).reverse().map(a=>String(a[1]).padStart(2,'0')+':00');
- const L=[];
- L.push(`Jika truk tiba pukul ${hhmm(t)}, station terbaik: <b>Station ${best+1}</b> (perkiraan tunggu ${ew[best]} mnt).`);
- const free=[];for(let k=0;k<S;k++)if(R.rdy[t*S+k]>0&&R.qLen[t*S+k]===0)free.push(k+1);
- L.push(free.length?`Baterai siap tanpa antrean di station ${free.join(', ')}: aman masuk sekarang.`:'Tidak ada station dengan baterai siap tanpa antrean pada jam ini.');
- if(hrs.length){L.push(`Jam tiba paling lancar: ${low.join(', ')}.`);L.push(`Jam tiba paling padat: ${hi.join(', ')}.`)}
- $('hint').innerHTML=L.map(x=>`<li>${x}</li>`).join('');
 }
 function drawSweep(){
  let h='<table><tr><th>Station</th><th>Swap/hari</th><th>Tunggu rata-rata</th><th>Tunggu maks</th><th>Utilisasi charger</th><th>Efisiensi armada</th><th>Status</th></tr>';
@@ -111,22 +96,13 @@ function drawStSel(){
 }
 function run(){
  R=simulateUI(P);if(gSt>=R.S)gSt=0;
- $('vTruk').textContent=P.nTruk;$('vSt').textContent=P.nSt;$('vSlots').textContent=P.slots;$('vSoc').textContent=P.socMin+'%';$('vJit').textContent=P.jitter+'%';
- const ru=route(P),socPP=ru.kwhPP/P.capKwh*100,usable=100-P.socMin;
- $('ruteInfo').innerHTML=`Sekali PP ${f1(ru.ppKm)} km · ${f1(ru.ppMin)} mnt · ${f1(ru.kwhPP)} kWh (${f1(socPP)}% SOC). Swap tiap ${R.ppPerSwap} PP.`+
-  (socPP>usable?`<br><b style="color:var(--bad)">Baterai tidak cukup untuk 1 PP di atas SOC minimum. Perbesar baterai atau perpendek jarak.</b>`:'');
+ $('vTruk').textContent=P.nTruk;$('vSt').textContent=P.nSt;$('vSlots').textContent=P.slots;
  drawKpi();drawStSel();drawCharts();drawSnap();drawSweep();
 }
 function bind(){
- const num=['nTruk','nSt','slots','socMin','swapMin','chargeMin','jarakKm','speedKmh','kwhKm','capKwh','earlySoc','seed'];
+ const num=['nTruk','nSt','slots','swapMin','chargeMin','jarakKm','speedKmh','kwhKm','capKwh'];
  num.forEach(id=>{$(id).value=P[id];$(id).oninput=e=>{const v=parseFloat(e.target.value);if(!isNaN(v)&&v>0){P[id]=v;run()}}});
- $('jitter').value=P.jitter;$('jitter').oninput=e=>{P.jitter=+e.target.value;run()};
- ['slotMode','startMode','strategy'].forEach(id=>{$(id).value=P[id];$(id).onchange=e=>{P[id]=e.target.value;run()}});
- $('propCharge').value=P.propCharge;$('propCharge').onchange=e=>{P.propCharge=e.target.value==='1';run()};
+ ['slotMode'].forEach(id=>{$(id).value=P[id];$(id).onchange=e=>{P[id]=e.target.value;run()}});
  $('scrub').oninput=e=>{tNow=+e.target.value;drawCharts();drawSnap()};
- $('presets').innerHTML=PRESETS.map((p,i)=>`<button data-i="${i}">${p[0]}</button>`).join('');
- $('presets').querySelectorAll('button').forEach(b=>b.onclick=()=>{Object.assign(P,D,PRESETS[+b.dataset.i][1]);sync();run()});
 }
-function sync(){['nTruk','nSt','slots','socMin','swapMin','chargeMin','jarakKm','speedKmh','kwhKm','capKwh','earlySoc','seed','jitter','slotMode','startMode','strategy'].forEach(id=>$(id).value=P[id]);$('propCharge').value=P.propCharge?'1':'0'}
-P.jitter=D.jitter;
 bind();run();
