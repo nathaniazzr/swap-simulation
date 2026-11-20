@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Simulasi Battery Swapping Station</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+<h1>Simulasi Battery Swapping Station</h1>
+<div class="sub">Prototype perencanaan: jadwal swap, antrean, dan jumlah station untuk armada truk EV. Simulasi per menit, 24 jam.</div>
+</header>
+<div class="wrap">
+<aside>
+ <div class="card"><h2>Skenario cepat</h2>
+  <div class="presets" id="presets"></div>
+ </div>
+ <div class="card"><h2>Armada dan station</h2>
+  <div class="row"><div class="t"><span>Jumlah truk</span><span class="v" id="vTruk"></span></div><input type="range" id="nTruk" min="1" max="60" step="1"></div>
+  <div class="row"><div class="t"><span>Jumlah station</span><span class="v" id="vSt"></span></div><input type="range" id="nSt" min="1" max="8" step="1"></div>
+  <div class="row"><div class="t"><span>Slot per station</span><span class="v" id="vSlots"></span></div><input type="range" id="slots" min="1" max="6" step="1"></div>
+  <label>Aturan slot<select id="slotMode"><option value="all">Semua slot terisi</option><option value="one">1 slot wajib kosong</option></select></label>
+ </div>
+ <div class="card"><h2>Rute dan baterai</h2>
+  <label>Jarak station ke tujuan (km)<input type="number" id="jarakKm" min="1" max="200" step="0.1"></label>
+  <label>Kapasitas baterai truk (kWh)<input type="number" id="capKwh" min="50" max="1000" step="1"></label>
+  <div class="note" id="ruteInfo" style="margin-top:4px"></div>
+ </div>
+ <div class="card"><h2>Pola dan strategi</h2>
+  <label>Awal hari<select id="startMode"><option value="bertahap">Bertahap (merata)</option><option value="serentak">Serentak (SOC 100%)</option></select></label>
+  <label>Strategi masuk<select id="strategy"><option value="standar">Standar (tunggu SOC batas)</option><option value="fleksibel">Fleksibel (masuk lebih awal bila kosong)</option></select></label>
+  <div class="row"><div class="t"><span>SOC minimum</span><span class="v" id="vSoc"></span></div><input type="range" id="socMin" min="5" max="40" step="1"></div>
+  <div class="row"><div class="t"><span>Variasi waktu tempuh</span><span class="v" id="vJit"></span></div><input type="range" id="jitter" min="0" max="30" step="1"></div>
+  <details><summary>Parameter teknis</summary>
+   <label>Waktu swap (mnt)<input type="number" id="swapMin" min="1" max="30"></label>
+   <label>Waktu charging (mnt)<input type="number" id="chargeMin" min="20" max="240"></label>
+   <label>Kecepatan rata-rata (km/jam)<input type="number" id="speedKmh" min="5" max="120" step="1"></label>
+   <label>Konsumsi (kWh/km)<input type="number" id="kwhKm" min="0.1" max="5" step="0.01"></label>
+   <label>SOC masuk dini (%)<input type="number" id="earlySoc" min="10" max="60"></label>
+   <label>Charging proporsional<select id="propCharge"><option value="0">Tidak (tetap)</option><option value="1">Ya (sesuai SOC)</option></select></label>
+   <label>Seed acak<input type="number" id="seed" min="1" max="9999"></label>
+  </details>
+ </div>
+</aside>
+<main>
+ <div class="verdict" id="verdict"></div>
+ <div class="kpis" id="kpis"></div>
+
+ <div class="card" style="margin-bottom:12px">
+  <h2>Waktu dan snapshot</h2>
+  <div class="scrub"><div class="clock" id="clock"></div><input type="range" id="scrub" min="0" max="1439" step="1" value="480"></div>
+  <div class="grid2" style="margin-bottom:0">
+   <div><div class="note" style="margin:0 0 6px">Posisi truk (angka = SOC)</div><div class="trucks" id="trucks"></div>
+    <div class="legend"><span><i style="background:color-mix(in srgb,var(--acc2) 40%,var(--card))"></i>Jalan</span><span><i style="background:color-mix(in srgb,var(--warn) 55%,var(--card))"></i>Antri</span><span><i style="background:color-mix(in srgb,var(--ok) 55%,var(--card))"></i>Swap</span><span><i style="background:var(--card);border:1px solid var(--line)"></i>Standby</span></div>
+   </div>
+   <div><div class="note" style="margin:0 0 6px">Kondisi station dan saran masuk</div><div id="stTable"></div><ul class="hint" id="hint"></ul></div>
+  </div>
+ </div>
+
+ <div class="grid2">
+  <div class="card"><h2>Antrean truk dan baterai siap</h2><div id="chQ"></div>
+   <div class="legend"><span><i style="background:var(--bad)"></i>Truk antri (semua station)</span><span><i style="background:var(--rdy)"></i>Baterai siap pakai</span></div></div>
+  <div class="card"><h2>Rata-rata waktu tunggu menurut jam tiba</h2><div id="chW"></div>
+   <div class="legend"><span><i style="background:var(--acc2)"></i>Menit tunggu</span><span><i style="background:var(--bad)"></i>Jam paling padat</span></div></div>
+ </div>
+
+ <div class="card" style="margin-bottom:12px">
+  <h2>Jadwal slot per station</h2>
+  <div class="stsel" id="stsel"></div>
+  <div id="chG"></div>
+  <div class="legend"><span><i style="background:var(--chg)"></i>Charging</span><span><i style="background:var(--rdy)"></i>Siap, menunggu truk</span><span><i style="background:var(--jlk)"></i>Bay swap sibuk</span></div>
+  <div class="note">Slot siap berarti baterai penuh menunggu. Slot siap panjang menandakan station kelebihan kapasitas; antrean panjang di grafik atas menandakan kekurangan.</div>
+ </div>
+
+ <div class="card">
+  <h2>Perbandingan jumlah station (parameter lain sama)</h2>
+  <div id="sweep"></div>
+  <div class="note">Kriteria layak: rata-rata tunggu di bawah 5 menit dan tunggu maksimum di bawah 30 menit. Prototype ini model perencanaan, bukan data operasional. Untuk pemakaian harian real-time perlu data SOC dan posisi truk aktual.</div>
+ </div>
+</main>
+</div>
+<script src="sim.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
