@@ -8,7 +8,7 @@ function mulberry32(a) {
   };
 }
 
-// state truk: 0 standby, 1 jalan (PP), 2 antri, 3 swap
+// state truk: 0 standby, 1 jalan (PP), 2 antri, 3 swap, 4 istirahat (UA), 5 maintenance (PA)
 function simulate(P) {
   const T = Math.round(P.opsH * 60);
   const rnd = mulberry32(P.seed | 0);
@@ -19,11 +19,30 @@ function simulate(P) {
   const jit = () => 1 + (P.jitter > 0 ? (rnd() * 2 - 1) * P.jitter : 0);
   const cycleIdeal = ppPerSwap * P.ppMin + P.swapMin;
 
+  // Jam istirahat (usage of availability): P.breaks = [{ hours, start }], start = jam mulai (0-23).
+  // work[t] = 1 truk boleh kerja, 0 semua truk istirahat serentak. Blok yang lewat 24:00 lanjut ke 00:00.
+  const work = new Uint8Array(T).fill(1);
+  for (const b of P.breaks || []) {
+    const len = Math.round((+b.hours || 0) * 60);
+    if (len <= 0) continue;
+    const a = Math.round((+b.start || 0) * 60);
+    for (let x = 0; x < Math.min(len, T); x++) work[(a + x) % T] = 0;
+  }
+  let workMin = 0;
+  for (let t = 0; t < T; t++) workMin += work[t];
+
+  // PA per truk: setiap truk hanya tersedia PA% dari waktu. Sisanya (downMin menit) jadi maintenance.
+  // Jadwal maintenance digilir: truk ke-i mulai di menit i x (T - downMin) / N, supaya tidak turun bersamaan.
+  // Truk menyelesaikan PP / swap dulu, lalu maintenance penuh downMin menit.
+  const pa = P.pa == null ? 1 : Math.min(1, Math.max(0, P.pa));
+  const downMin = Math.round((1 - pa) * T);
+
   const trucks = [];
   for (let i = 0; i < N; i++) {
     trucks.push({
       soc: P.startMode === 'bertahap' ? 100 - socPerPP * ppPerSwap * 0.98 * (i / N) : 100,
       state: 0, rem: 0, st: -1, qAt: 0, pp: 0, swaps: 0, wait: 0, startAt: 0,
+      downAt: downMin > 0 ? Math.round((i * (T - downMin)) / N) : Infinity, downLeft: downMin, prev: 1,
     });
   }
   const sts = [];
@@ -57,8 +76,20 @@ function simulate(P) {
   for (let t = 0; t < T; t++) {
     for (let i = 0; i < N; i++) {
       const tr = trucks[i];
+      if (tr.state === 5) {
+        tr.downLeft -= 1;
+        if (tr.downLeft <= 0) { if (work[t]) { tr.state = 1; tr.rem = P.ppMin * jit(); } else tr.state = 4; }
+        continue;
+      }
+      // mulai maintenance hanya saat truk ada di gudang (standby / istirahat)
+      if (t >= tr.downAt && tr.downLeft > 0 && (tr.state === 0 || tr.state === 4)) { tr.state = 5; tr.downLeft -= 1; continue; }
       if (tr.state === 0) {
-        if (t >= tr.startAt) { tr.state = 1; tr.rem = P.ppMin * jit(); }
+        if (t >= tr.startAt) {
+          if (work[t]) { tr.state = 1; tr.rem = P.ppMin * jit(); } else tr.state = 4;
+        }
+      } else if (tr.state === 4) {
+        // selesai istirahat: semua truk jalan lagi bersamaan
+        if (work[t]) { tr.state = 1; tr.rem = P.ppMin * jit(); }
       }
       if (tr.state === 1) {
         tr.rem -= 1;
@@ -73,6 +104,10 @@ function simulate(P) {
           if (go) {
             const k = chooseStation(t);
             tr.state = 2; tr.st = k; tr.qAt = t; sts[k].queue.push(i);
+          } else if (t >= tr.downAt && tr.downLeft > 0) {
+            tr.state = 5; // PP selesai, waktunya maintenance (PA)
+          } else if (!work[t]) {
+            tr.state = 4; // PP selesai, truk sudah di gudang: istirahat
           } else {
             tr.rem = P.ppMin * jit();
           }
@@ -80,7 +115,9 @@ function simulate(P) {
       } else if (tr.state === 3) {
         tr.rem -= 1;
         if (tr.rem <= 0) {
-          tr.soc = 100; tr.swaps += 1; tr.state = 1; tr.rem = P.ppMin * jit();
+          tr.soc = 100; tr.swaps += 1;
+          if (t >= tr.downAt && tr.downLeft > 0) tr.state = 5;
+          else if (work[t]) { tr.state = 1; tr.rem = P.ppMin * jit(); } else tr.state = 4;
           sts[tr.st].swapTruck = -1;
         }
       }
@@ -127,7 +164,7 @@ function simulate(P) {
   const p90 = swaps ? waits[Math.min(swaps - 1, Math.floor(0.9 * swaps))] : 0;
   let ppTotal = 0, waitTotal = 0;
   for (const tr of trucks) { ppTotal += tr.pp; waitTotal += tr.wait; }
-  const idealPP = N * T / (P.ppMin + P.swapMin / ppPerSwap);
+  const idealPP = N * Math.max(0, workMin - downMin) / (P.ppMin + P.swapMin / ppPerSwap);
   let chargeMin = 0, bayMin = 0, peakQ = 0, sumQ = 0, peakCharging = 0;
   for (let t = 0; t < T; t++) {
     let qs = 0, cs = 0;
@@ -141,11 +178,11 @@ function simulate(P) {
   for (const e of events) { const h = Math.min(waitByHour.length - 1, Math.floor(e.arr / 60)); waitByHour[h].n++; waitByHour[h].w += e.wait; }
 
   return {
-    P, T, N, S, nb, socPerPP, ppPerSwap, cycleIdeal, trucks, events,
+    P, T, N, S, nb, socPerPP, ppPerSwap, cycleIdeal, trucks, events, work,
     tState, tSoc, tSt, qLen, rdy, chg, slotState, bayBusy,
     kpi: {
-      swaps, ppTotal, idealPP, eff: idealPP ? ppTotal / idealPP : 0,
-      avgWait, maxWait, p90,
+      swaps, ppTotal, idealPP, eff: idealPP ? Math.min(1, ppTotal / idealPP) : 0,
+      avgWait, maxWait, p90, workMin, ua: workMin / T, pa, downMin,
       utilCharger: chargeMin / (S * nb * T), utilBay: bayMin / (S * T),
       avgQ: sumQ / T, peakQ, peakKW: peakCharging * kwPerCharger, energyMWh: energy / 1000,
       waitShare: waitTotal / (N * T),

@@ -1,31 +1,44 @@
 <!DOCTYPE html>
-<html lang="id">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Simulasi Battery Swapping Station</title>
+<title>Battery Swapping Station Simulation</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header>
-<h1>Simulasi Battery Swapping Station</h1>
+<h1>Battery Swapping Station Simulation</h1>
 <div class="wrap">
 <aside>
- <div class="card"><h2>Armada dan station</h2>
-  <div class="row"><div class="t"><span>Jumlah truk</span><span class="v" id="vTruk"></span></div><input type="range" id="nTruk" min="1" max="60" step="1"></div>
-  <div class="row"><div class="t"><span>Jumlah station</span><span class="v" id="vSt"></span></div><input type="range" id="nSt" min="1" max="8" step="1"></div>
-  <div class="row"><div class="t"><span>Slot per station</span><span class="v" id="vSlots"></span></div><input type="range" id="slots" min="1" max="10" step="1"></div>
-  <label>Aturan slot<select id="slotMode"><option value="all">Semua slot terisi</option><option value="one">1 slot wajib kosong</option></select></label>
+ <div class="card"><h2>Fleet and stations</h2>
+  <label>Number of trucks<input type="number" id="nTruk" min="1" max="200" step="1"></label>
+  <div class="row"><div class="t"><span>Number of stations</span><span class="v" id="vSt"></span></div><input type="range" id="nSt" min="1" max="8" step="1"></div>
+  <div class="row"><div class="t"><span>Slots per station</span><span class="v" id="vSlots"></span></div><input type="range" id="slots" min="1" max="10" step="1"></div>
  </div>
- <div class="card"><h2>Rute dan baterai</h2>
-  <label>Jarak station ke tujuan (km)<input type="number" id="jarakKm" min="1" max="200" step="0.1"></label>
-  <label>Kapasitas baterai truk (kWh)<input type="number" id="capKwh" min="50" max="1000" step="1"></label>
+ <div class="card"><h2>Route and battery</h2>
+  <label>Distance warehouse to hauling site (km)<input type="number" id="jarakKm" min="1" max="200" step="0.1"></label>
+  <label>Truck battery capacity (kWh)<input type="number" id="capKwh" min="50" max="1000" step="1"></label>
  </div>
- <div class="card"><h2>Parameter teknis</h2>
-   <label>Waktu swap (mnt)<input type="number" id="swapMin" min="1" max="30"></label>
-   <label>Waktu charging (mnt)<input type="number" id="chargeMin" min="20" max="240"></label>
-   <label>Kecepatan rata-rata (km/jam)<input type="number" id="speedKmh" min="5" max="120" step="1"></label>
-   <label>Konsumsi (kWh/km)<input type="number" id="kwhKm" min="0.1" max="5" step="0.01"></label>
+ <div class="card"><h2>Technical parameters</h2>
+   <label>Physical availability / PA (%)<input type="number" id="pa" min="1" max="100" step="1"></label>
+   <label>Swap time (min)<input type="number" id="swapMin" min="1" max="30"></label>
+   <label>Charging time (min)<input type="number" id="chargeMin" min="20" max="240"></label>
+   <label>Loaded speed (km/h)<input type="number" id="loadedKmh" min="1" max="120" step="0.1"></label>
+   <label>Empty speed (km/h)<input type="number" id="emptyKmh" min="1" max="120" step="0.1"></label>
+   <div class="note" id="speedInfo" style="margin:0 0 6px"></div>
+   <label>Energy consumption (kWh/km)<input type="number" id="kwhKm" min="0.1" max="5" step="0.01"></label>
+ </div>
+ <div class="card ua" id="uaCard">
+  <div class="uahead"><h2>Usage of availability</h2><button type="button" class="ibtn" id="uaOpen" title="Set break hours">+</button></div>
+  <div class="note" id="uaInfo" style="margin:0"></div>
+  <div class="card uapanel" id="uaPanel" hidden>
+   <div class="uahead"><h2>Usage of availability: break hours</h2><button type="button" class="ibtn" id="uaClose" title="Close">✕</button></div>
+   <div class="note" style="margin:0 0 10px">Type the break length in <b>Input hours</b>, then drag the block to the hour you want. All trucks stop at the same time; trucks on the road finish their round trip first.</div>
+   <div id="uaList"></div>
+   <button type="button" id="uaAdd">+ Add break</button>
+   <div class="note" id="uaSum"></div>
+  </div>
  </div>
 </aside>
 <main>
@@ -33,34 +46,28 @@
  <div class="kpis" id="kpis"></div>
 
  <div class="card" style="margin-bottom:12px">
-  <h2>Waktu dan snapshot</h2>
+  <h2>Station count comparison (other parameters unchanged)</h2>
+  <div id="sweep"></div>
+ </div>
+
+ <div class="card" style="margin-bottom:12px">
+  <h2>Time and snapshot</h2>
   <div class="scrub"><div class="clock" id="clock"></div><input type="range" id="scrub" min="0" max="1439" step="1" value="480"></div>
   <div class="grid2" style="margin-bottom:0">
-   <div><div class="note" style="margin:0 0 6px">Posisi truk (angka = SOC)</div><div class="trucks" id="trucks"></div>
-    <div class="legend"><span><i style="background:color-mix(in srgb,var(--acc2) 40%,var(--card))"></i>Jalan</span><span><i style="background:color-mix(in srgb,var(--warn) 55%,var(--card))"></i>Antri</span><span><i style="background:color-mix(in srgb,var(--ok) 55%,var(--card))"></i>Swap</span><span><i style="background:var(--card);border:1px solid var(--line)"></i>Standby</span></div>
+   <div><div class="note" style="margin:0 0 6px">Truck status (number = SOC)</div><div class="trucks" id="trucks"></div>
+    <div class="legend"><span><i style="background:color-mix(in srgb,var(--acc2) 40%,var(--card))"></i>Hauling</span><span><i style="background:color-mix(in srgb,var(--warn) 55%,var(--card))"></i>Queued</span><span><i style="background:color-mix(in srgb,var(--ok) 55%,var(--card))"></i>Swap</span><span><i style="background:var(--card);border:1px solid var(--line)"></i>Standby</span><span><i style="background:color-mix(in srgb,var(--idle) 70%,var(--card))"></i>Break</span><span><i style="background:var(--line)"></i>Maintenance</span></div>
    </div>
-   <div><div class="note" style="margin:0 0 6px">Kondisi station</div><div id="stTable"></div></div>
+   <div><div class="note" style="margin:0 0 6px">Station status</div><div id="stTable"></div></div>
   </div>
  </div>
 
  <div class="grid2">
-  <div class="card"><h2>Antrean truk dan baterai siap</h2><div id="chQ"></div>
-   <div class="legend"><span><i style="background:var(--bad)"></i>Truk antri (semua station)</span><span><i style="background:var(--rdy)"></i>Baterai siap pakai</span></div></div>
-  <div class="card"><h2>Rata-rata waktu tunggu menurut jam tiba</h2><div id="chW"></div>
-   <div class="legend"><span><i style="background:var(--acc2)"></i>Menit tunggu</span><span><i style="background:var(--bad)"></i>Jam paling padat</span></div></div>
+  <div class="card"><h2>Truck queue and ready batteries</h2><div id="chQ"></div>
+   <div class="legend"><span><i style="background:var(--bad)"></i>Trucks queued (all stations)</span><span><i style="background:var(--rdy)"></i>Ready batteries</span><span><i style="background:var(--idle)"></i>Break hours</span></div></div>
+  <div class="card"><h2>Average wait by arrival hour</h2><div id="chW"></div>
+   <div class="legend"><span><i style="background:var(--acc2)"></i>Wait (min)</span><span><i style="background:var(--bad)"></i>Busiest hours</span></div></div>
  </div>
 
- <div class="card" style="margin-bottom:12px">
-  <h2>Jadwal slot per station</h2>
-  <div class="stsel" id="stsel"></div>
-  <div id="chG"></div>
-  <div class="legend"><span><i style="background:var(--chg)"></i>Charging</span><span><i style="background:var(--rdy)"></i>Siap, menunggu truk</span><span><i style="background:var(--jlk)"></i>Bay swap sibuk</span></div>
- </div>
-
- <div class="card">
-  <h2>Perbandingan jumlah station (parameter lain sama)</h2>
-  <div id="sweep"></div>
- </div>
 </main>
 </div>
 <script src="sim.js"></script>
